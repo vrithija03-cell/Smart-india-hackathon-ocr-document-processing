@@ -1,0 +1,5 @@
+﻿.vscode/
+documents/
+ocr_result.json
+__pycache__/
+*.pyc
