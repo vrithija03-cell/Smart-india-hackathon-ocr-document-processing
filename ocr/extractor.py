@@ -3,18 +3,27 @@ from PIL import Image, ImageEnhance, ImageFilter
 import re
 from datetime import datetime
 import json
-from tamper_detection import analyze_tampering
-from risk_score import calculate_risk_score
+
+from .tamper_detection import analyze_tampering
+from .risk_score import calculate_risk_score
 
 
-# Tesseract location
+# =========================================================
+# TESSERACT LOCATION
+# =========================================================
+
 pytesseract.pytesseract.tesseract_cmd = (
     r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 )
 
 
+# =========================================================
+# IMAGE PREPROCESSING
+# =========================================================
+
 def preprocess_image(image_path):
     """Improve the image before OCR."""
+
     image = Image.open(image_path)
 
     image = image.convert("L")
@@ -24,8 +33,12 @@ def preprocess_image(image_path):
     return image
 
 
+# =========================================================
+# OCR EXTRACTION
+# =========================================================
+
 def extract_text(image_path):
-    """Extract text and keep confidence for every OCR word."""
+    """Extract text and confidence for every OCR word."""
 
     image = preprocess_image(image_path)
 
@@ -60,6 +73,10 @@ def extract_text(image_path):
     return text, average_confidence, words, confidences
 
 
+# =========================================================
+# FIELD CONFIDENCE
+# =========================================================
+
 def calculate_field_confidence(words, confidences, field):
     """Calculate OCR confidence for Name or DOB."""
 
@@ -68,47 +85,76 @@ def calculate_field_confidence(words, confidences, field):
         for word in words
     ]
 
-    # NAME confidence
+    # -------------------------
+    # NAME CONFIDENCE
+    # -------------------------
+
     if field.lower() == "name":
 
         if "name" in clean_words:
+
             start = clean_words.index("name") + 1
             name_confidences = []
 
             for j in range(start, len(words)):
 
-                if clean_words[j] in ["date", "document"]:
+                if clean_words[j] in [
+                    "date",
+                    "document"
+                ]:
                     break
 
                 name_confidences.append(confidences[j])
 
             if name_confidences:
+
                 return round(
-                    sum(name_confidences) / len(name_confidences),
+                    sum(name_confidences)
+                    / len(name_confidences),
                     2
                 )
 
-    # DOB confidence
+    # -------------------------
+    # DOB CONFIDENCE
+    # -------------------------
+
     elif field.lower() == "dob":
 
         for i in range(len(words) - 3):
 
+            word1 = words[i].strip(":").lower()
+            word2 = words[i + 1].strip(":").lower()
+            word3 = words[i + 2].strip(":").lower()
+
             if (
-                words[i].strip(":").lower() == "date"
-                and words[i + 1].strip(":").lower() == "of"
-                and words[i + 2].strip(":").lower() == "birth"
+                word1 == "date"
+                and word2 == "of"
+                and word3 == "birth"
             ):
-                return round(confidences[i + 3], 2)
+
+                if i + 3 < len(confidences):
+
+                    return round(
+                        confidences[i + 3],
+                        2
+                    )
 
     return 0.0
 
+
+# =========================================================
+# DOCUMENT TYPE
+# =========================================================
 
 def detect_document_type(text):
     """Detect the likely document type."""
 
     text_upper = text.upper()
 
-    if "AADHAAR" in text_upper or "UNIQUE IDENTIFICATION" in text_upper:
+    if (
+        "AADHAAR" in text_upper
+        or "UNIQUE IDENTIFICATION" in text_upper
+    ):
         return "Aadhaar"
 
     elif (
@@ -129,6 +175,10 @@ def detect_document_type(text):
     return "Unknown"
 
 
+# =========================================================
+# DOB VALIDATION
+# =========================================================
+
 def validate_dob(dob):
     """Check whether the extracted DOB is a valid date."""
 
@@ -143,14 +193,24 @@ def validate_dob(dob):
     ]
 
     for date_format in formats:
+
         try:
-            datetime.strptime(dob, date_format)
+            datetime.strptime(
+                dob,
+                date_format
+            )
+
             return True
+
         except ValueError:
             continue
 
     return False
 
+
+# =========================================================
+# FIELD EXTRACTION
+# =========================================================
 
 def extract_fields(text):
     """Extract important fields from OCR text."""
@@ -161,99 +221,142 @@ def extract_fields(text):
         "document_id": None
     }
 
+    # -------------------------
     # Correct common OCR mistakes
+    # -------------------------
+
     text = text.replace("Narne", "Name")
     text = text.replace("D0B", "DOB")
     text = text.replace("Docurnent", "Document")
 
-    # Find Name
+    # -------------------------
+    # NAME
+    # -------------------------
+
     name_match = re.search(
-        r"Name\s*[:\-]?\s*(.*?)(?=\s+"
-        r"(?:DOB|Date of Birth|Birth Date|Document ID)\b|$)",
+        r"Name\s*[:\-]?\s*(.*?)"
+        r"(?=\s+"
+        r"(?:DOB|Date of Birth|Birth Date|Document ID)\b"
+        r"|$)",
         text,
         re.IGNORECASE
     )
 
     if name_match:
-        fields["name"] = name_match.group(1).strip()
 
-    # Find Date of Birth
+        fields["name"] = (
+            name_match
+            .group(1)
+            .strip()
+        )
+
+    # -------------------------
+    # DATE OF BIRTH
+    # -------------------------
+
     dob_match = re.search(
-        r"(?:DOB|Date of Birth|Birth Date)\s*[:\-]?\s*"
-        r"([0-9O@IlS]{1,2}\s*[/-]\s*"
-        r"[0-9O@IlS]{1,2}\s*[/-]\s*"
+        r"(?:DOB|Date of Birth|Birth Date)"
+        r"\s*[:\-]?\s*"
+        r"([0-9O@IlS]{1,2}"
+        r"\s*[/-]\s*"
+        r"[0-9O@IlS]{1,2}"
+        r"\s*[/-]\s*"
         r"[0-9O@IlS]{2,4})",
         text,
         re.IGNORECASE
     )
 
     if dob_match:
+
         dob = dob_match.group(1)
 
-        # Correct common OCR mistakes
+        # Common OCR corrections
         dob = dob.replace("@", "0")
         dob = dob.replace("O", "0")
         dob = dob.replace("I", "1")
         dob = dob.replace("l", "1")
         dob = dob.replace("\\", "")
 
-        dob = re.sub(r"\s+", "", dob)
+        dob = re.sub(
+            r"\s+",
+            "",
+            dob
+        )
 
         fields["date_of_birth"] = dob
 
-    # Find Document ID
+    # -------------------------
+    # DOCUMENT ID
+    # -------------------------
+
     id_match = re.search(
-        r"(?:Document ID|Document Number|ID)\s*[:\-]?\s*"
+        r"(?:Document ID|Document Number|ID)"
+        r"\s*[:\-]?\s*"
         r"([A-Za-z0-9]+)",
         text,
         re.IGNORECASE
     )
 
     if id_match:
-        fields["document_id"] = id_match.group(1)
+
+        fields["document_id"] = (
+            id_match
+            .group(1)
+        )
 
     return fields
 
 
-# =========================
-# MAIN PROGRAM
-# =========================
+# =========================================================
+# MAIN DOCUMENT PROCESSING FUNCTION
+# =========================================================
 
-if __name__ == "__main__":
+def process_document(image_path):
+    """
+    Complete document screening pipeline.
 
-    image_path = "documents/test.png"
-    tamper_result = analyze_tampering(image_path)
+    This function is used by both:
+    1. The test program
+    2. The web application
+    """
 
-    # OCR
-    text, ocr_confidence, words, confidences = extract_text(
+    # -------------------------
+    # Tampering analysis
+    # -------------------------
+
+    tamper_result = analyze_tampering(
         image_path
     )
 
-    print("\n========== RAW OCR ==========")
-    print(text)
+    # -------------------------
+    # OCR
+    # -------------------------
 
-    # OCR confidence
-    print("\n========== OCR CONFIDENCE ==========")
-    print(
-        "Average OCR Confidence:",
-        round(ocr_confidence, 2),
-        "%"
+    (
+        text,
+        ocr_confidence,
+        words,
+        confidences
+    ) = extract_text(image_path)
+
+    # -------------------------
+    # Document type
+    # -------------------------
+
+    document_type = detect_document_type(
+        text
     )
 
-    # Document type
-    document_type = detect_document_type(text)
-
-    print("\n========== DOCUMENT TYPE ==========")
-    print("Document Type:", document_type)
-    print("\n========== TAMPERING ANALYSIS ==========")
-    print("Status:", tamper_result["status"])
-    print("Tampering Score:", tamper_result["tampering_score"])
-    print("Signals:", tamper_result["signals"])
-
+    # -------------------------
     # Extract fields
+    # -------------------------
+
     fields = extract_fields(text)
 
+    # -------------------------
     # Field confidence
+    # -------------------------
+
     name_confidence = calculate_field_confidence(
         words,
         confidences,
@@ -266,56 +369,241 @@ if __name__ == "__main__":
         "dob"
     )
 
-    print("\n========== FIELD CONFIDENCE ==========")
-    print("Name Confidence:", name_confidence)
-    print("DOB Confidence:", dob_confidence)
+    # -------------------------
+    # Validation
+    # -------------------------
 
-    # DOB validation
     fields["dob_valid"] = validate_dob(
         fields["date_of_birth"]
     )
+
     fields["name_valid"] = bool(
-    fields["name"] and
-    len(fields["name"].strip()) >= 2
-)
+        fields["name"]
+        and len(fields["name"].strip()) >= 2
+    )
 
     fields["document_id_valid"] = bool(
-    fields["document_id"] and
-    len(fields["document_id"].strip()) >= 5
-)
+        fields["document_id"]
+        and len(fields["document_id"].strip()) >= 5
+    )
 
-    # Add confidence
+    # -------------------------
+    # Confidence results
+    # -------------------------
+
     fields["ocr_confidence"] = round(
         ocr_confidence,
         2
     )
 
-    fields["name_confidence"] = name_confidence
-    fields["dob_confidence"] = dob_confidence
+    fields["name_confidence"] = (
+        name_confidence
+    )
 
-    # Add document type
-    fields["document_type"] = document_type
-    fields["tampering"] = tamper_result
-    risk_result = calculate_risk_score(fields)
-    fields["risk_assessment"] = risk_result
+    fields["dob_confidence"] = (
+        dob_confidence
+    )
 
-    print("\n========== EXTRACTED FIELDS ==========")
-    print("\n========== RISK ASSESSMENT ==========")
-    print("Risk Score:", risk_result["risk_score"])
-    print("Risk Category:", risk_result["risk_category"])
+    # -------------------------
+    # Document type
+    # -------------------------
+
+    fields["document_type"] = (
+        document_type
+    )
+
+    # -------------------------
+    # Tampering
+    # -------------------------
+
+    fields["tampering"] = (
+        tamper_result
+    )
+
+    # -------------------------
+    # Risk assessment
+    # -------------------------
+
+    risk_result = calculate_risk_score(
+        fields
+    )
+
+    fields["risk_assessment"] = (
+        risk_result
+    )
+
+    return fields, text
+
+
+# =========================================================
+# TEST PROGRAM
+# =========================================================
+
+if __name__ == "__main__":
+
+    image_path = "documents/test.png"
+
+    fields, text = process_document(
+        image_path
+    )
+
+    # -------------------------
+    # RAW OCR
+    # -------------------------
+
+    print(
+        "\n========== RAW OCR =========="
+    )
+
+    print(text)
+
+    # -------------------------
+    # OCR CONFIDENCE
+    # -------------------------
+
+    print(
+        "\n========== OCR CONFIDENCE =========="
+    )
+
+    print(
+        "Average OCR Confidence:",
+        fields["ocr_confidence"],
+        "%"
+    )
+
+    # -------------------------
+    # DOCUMENT TYPE
+    # -------------------------
+
+    print(
+        "\n========== DOCUMENT TYPE =========="
+    )
+
+    print(
+        "Document Type:",
+        fields["document_type"]
+    )
+
+    # -------------------------
+    # TAMPERING
+    # -------------------------
+
+    print(
+        "\n========== TAMPERING ANALYSIS =========="
+    )
+
+    print(
+        "Status:",
+        fields["tampering"]["status"]
+    )
+
+    print(
+        "Tampering Score:",
+        fields["tampering"]["tampering_score"]
+    )
+
+    print(
+        "Signals:",
+        fields["tampering"]["signals"]
+    )
+
+    # -------------------------
+    # FIELD CONFIDENCE
+    # -------------------------
+
+    print(
+        "\n========== FIELD CONFIDENCE =========="
+    )
+
+    print(
+        "Name Confidence:",
+        fields["name_confidence"]
+    )
+
+    print(
+        "DOB Confidence:",
+        fields["dob_confidence"]
+    )
+
+    # -------------------------
+    # EXTRACTED FIELDS
+    # -------------------------
+
+    print(
+        "\n========== EXTRACTED FIELDS =========="
+    )
+
+    print(
+        "Name:",
+        fields["name"]
+    )
+
+    print(
+        "Date of Birth:",
+        fields["date_of_birth"]
+    )
+
+    print(
+        "Document ID:",
+        fields["document_id"]
+    )
+
+    print(
+        "DOB Valid:",
+        fields["dob_valid"]
+    )
+
+    print(
+        "Name Valid:",
+        fields["name_valid"]
+    )
+
+    print(
+        "Document ID Valid:",
+        fields["document_id_valid"]
+    )
+
+    # -------------------------
+    # RISK ASSESSMENT
+    # -------------------------
+
+    print(
+        "\n========== RISK ASSESSMENT =========="
+    )
+
+    print(
+        "Risk Score:",
+        fields["risk_assessment"]["risk_score"]
+    )
+
+    print(
+        "Risk Category:",
+        fields["risk_assessment"]["risk_category"]
+    )
 
     print("Reasons:")
-    for reason in risk_result["reasons"]:
-      print("-", reason)
-    print("Name:", fields["name"])
-    print("Date of Birth:", fields["date_of_birth"])
-    print("Document ID:", fields["document_id"])
-    print("DOB Valid:", fields["dob_valid"])
-    print("Name Valid:", fields["name_valid"])
-    print("Document ID Valid:", fields["document_id_valid"]) 
 
-    # Save JSON
-    with open("ocr_result.json", "w") as file:
-        json.dump(fields, file, indent=4)
+    for reason in fields[
+        "risk_assessment"
+    ]["reasons"]:
 
-    print("\nOCR result saved to ocr_result.json")
+        print("-", reason)
+
+    # -------------------------
+    # SAVE JSON
+    # -------------------------
+
+    with open(
+        "ocr_result.json",
+        "w"
+    ) as file:
+
+        json.dump(
+            fields,
+            file,
+            indent=4
+        )
+
+    print(
+        "\nOCR result saved to ocr_result.json"
+    )
