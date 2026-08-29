@@ -4,6 +4,7 @@ import re
 from datetime import datetime
 import json
 from tamper_detection import analyze_tampering
+from risk_score import calculate_risk_score
 
 
 # Tesseract location
@@ -295,8 +296,17 @@ if __name__ == "__main__":
     # Add document type
     fields["document_type"] = document_type
     fields["tampering"] = tamper_result
+    risk_result = calculate_risk_score(fields)
+    fields["risk_assessment"] = risk_result
 
     print("\n========== EXTRACTED FIELDS ==========")
+    print("\n========== RISK ASSESSMENT ==========")
+    print("Risk Score:", risk_result["risk_score"])
+    print("Risk Category:", risk_result["risk_category"])
+
+    print("Reasons:")
+    for reason in risk_result["reasons"]:
+      print("-", reason)
     print("Name:", fields["name"])
     print("Date of Birth:", fields["date_of_birth"])
     print("Document ID:", fields["document_id"])
