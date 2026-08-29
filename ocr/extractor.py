@@ -267,6 +267,15 @@ if __name__ == "__main__":
     fields["dob_valid"] = validate_dob(
         fields["date_of_birth"]
     )
+    fields["name_valid"] = bool(
+    fields["name"] and
+    len(fields["name"].strip()) >= 2
+)
+
+    fields["document_id_valid"] = bool(
+    fields["document_id"] and
+    len(fields["document_id"].strip()) >= 5
+)
 
     # Add confidence
     fields["ocr_confidence"] = round(
@@ -285,6 +294,8 @@ if __name__ == "__main__":
     print("Date of Birth:", fields["date_of_birth"])
     print("Document ID:", fields["document_id"])
     print("DOB Valid:", fields["dob_valid"])
+    print("Name Valid:", fields["name_valid"])
+    print("Document ID Valid:", fields["document_id_valid"]) 
 
     # Save JSON
     with open("ocr_result.json", "w") as file:
