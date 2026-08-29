@@ -4,6 +4,7 @@ import re
 from datetime import datetime
 import json
 
+
 # Tesseract location
 pytesseract.pytesseract.tesseract_cmd = (
     r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -22,7 +23,7 @@ def preprocess_image(image_path):
 
 
 def extract_text(image_path):
-    """Extract text, word confidence, and average OCR confidence."""
+    """Extract text and keep confidence for every OCR word."""
 
     image = preprocess_image(image_path)
 
@@ -54,24 +55,52 @@ def extract_text(image_path):
     else:
         average_confidence = 0
 
-    return text, average_confidence
+    return text, average_confidence, words, confidences
 
 
-def calculate_field_confidence(text, field):
-    """Estimate confidence for a field based on OCR text."""
+def calculate_field_confidence(words, confidences, field):
+    """Calculate OCR confidence for Name or DOB."""
 
-    field_pattern = re.escape(field)
+    clean_words = [
+        re.sub(r"[^a-zA-Z0-9]", "", word).lower()
+        for word in words
+    ]
 
-    match = re.search(
-        rf"{field_pattern}\s*[:\-]?\s*(.+?)(?=\s+(?:Name|DOB|Date of Birth|Document|ID)\b|$)",
-        text,
-        re.IGNORECASE
-    )
+    # NAME confidence
+    if field.lower() == "name":
 
-    if match:
-        return 100.0
+        if "name" in clean_words:
+            start = clean_words.index("name") + 1
+            name_confidences = []
+
+            for j in range(start, len(words)):
+
+                if clean_words[j] in ["date", "document"]:
+                    break
+
+                name_confidences.append(confidences[j])
+
+            if name_confidences:
+                return round(
+                    sum(name_confidences) / len(name_confidences),
+                    2
+                )
+
+    # DOB confidence
+    elif field.lower() == "dob":
+
+        for i in range(len(words) - 3):
+
+            if (
+                words[i].strip(":").lower() == "date"
+                and words[i + 1].strip(":").lower() == "of"
+                and words[i + 2].strip(":").lower() == "birth"
+            ):
+                return round(confidences[i + 3], 2)
 
     return 0.0
+
+
 def detect_document_type(text):
     """Detect the likely document type."""
 
@@ -95,8 +124,7 @@ def detect_document_type(text):
     elif "PASSPORT" in text_upper:
         return "Passport"
 
-    else:
-        return "Unknown"
+    return "Unknown"
 
 
 def validate_dob(dob):
@@ -105,7 +133,6 @@ def validate_dob(dob):
     if not dob:
         return False
 
-    # Try different common date formats
     formats = [
         "%d/%m/%Y",
         "%d-%m-%Y",
@@ -137,12 +164,10 @@ def extract_fields(text):
     text = text.replace("D0B", "DOB")
     text = text.replace("Docurnent", "Document")
 
-    # -------------------------
     # Find Name
-    # -------------------------
     name_match = re.search(
         r"Name\s*[:\-]?\s*(.*?)(?=\s+"
-        r"(?:DOB|Date of Birth|Birth Date)\b|$)",
+        r"(?:DOB|Date of Birth|Birth Date|Document ID)\b|$)",
         text,
         re.IGNORECASE
     )
@@ -150,9 +175,7 @@ def extract_fields(text):
     if name_match:
         fields["name"] = name_match.group(1).strip()
 
-    # -------------------------
     # Find Date of Birth
-    # -------------------------
     dob_match = re.search(
         r"(?:DOB|Date of Birth|Birth Date)\s*[:\-]?\s*"
         r"([0-9O@IlS]{1,2}\s*[/-]\s*"
@@ -165,21 +188,20 @@ def extract_fields(text):
     if dob_match:
         dob = dob_match.group(1)
 
-        # Correct OCR mistakes ONLY inside DOB
+        # Correct common OCR mistakes
         dob = dob.replace("@", "0")
         dob = dob.replace("O", "0")
         dob = dob.replace("I", "1")
         dob = dob.replace("l", "1")
+        dob = dob.replace("\\", "")
 
         dob = re.sub(r"\s+", "", dob)
 
         fields["date_of_birth"] = dob
 
-    # -------------------------
     # Find Document ID
-    # -------------------------
     id_match = re.search(
-        r"(?:ID|Document ID|Document Number)\s*[:\-]?\s*"
+        r"(?:Document ID|Document Number|ID)\s*[:\-]?\s*"
         r"([A-Za-z0-9]+)",
         text,
         re.IGNORECASE
@@ -200,15 +222,20 @@ if __name__ == "__main__":
     image_path = "documents/test.png"
 
     # OCR
-    text, ocr_confidence = extract_text(image_path)
+    text, ocr_confidence, words, confidences = extract_text(
+        image_path
+    )
 
     print("\n========== RAW OCR ==========")
     print(text)
 
     # OCR confidence
     print("\n========== OCR CONFIDENCE ==========")
-    print("Average OCR Confidence:",
-          round(ocr_confidence, 2), "%")
+    print(
+        "Average OCR Confidence:",
+        round(ocr_confidence, 2),
+        "%"
+    )
 
     # Document type
     document_type = detect_document_type(text)
@@ -216,20 +243,37 @@ if __name__ == "__main__":
     print("\n========== DOCUMENT TYPE ==========")
     print("Document Type:", document_type)
 
-    # Field extraction
+    # Extract fields
     fields = extract_fields(text)
-    name_confidence = calculate_field_confidence(text, "Name")
-    dob_confidence = calculate_field_confidence(text, "Date of Birth")
+
+    # Field confidence
+    name_confidence = calculate_field_confidence(
+        words,
+        confidences,
+        "name"
+    )
+
+    dob_confidence = calculate_field_confidence(
+        words,
+        confidences,
+        "dob"
+    )
+
+    print("\n========== FIELD CONFIDENCE ==========")
+    print("Name Confidence:", name_confidence)
+    print("DOB Confidence:", dob_confidence)
 
     # DOB validation
     fields["dob_valid"] = validate_dob(
         fields["date_of_birth"]
     )
 
-    # Add OCR confidence
+    # Add confidence
     fields["ocr_confidence"] = round(
-        ocr_confidence, 2
+        ocr_confidence,
+        2
     )
+
     fields["name_confidence"] = name_confidence
     fields["dob_confidence"] = dob_confidence
 
