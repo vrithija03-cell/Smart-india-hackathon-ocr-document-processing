@@ -22,7 +22,7 @@ def preprocess_image(image_path):
 
 
 def extract_text(image_path):
-    """Extract text and calculate OCR confidence."""
+    """Extract text, word confidence, and average OCR confidence."""
 
     image = preprocess_image(image_path)
 
@@ -57,6 +57,21 @@ def extract_text(image_path):
     return text, average_confidence
 
 
+def calculate_field_confidence(text, field):
+    """Estimate confidence for a field based on OCR text."""
+
+    field_pattern = re.escape(field)
+
+    match = re.search(
+        rf"{field_pattern}\s*[:\-]?\s*(.+?)(?=\s+(?:Name|DOB|Date of Birth|Document|ID)\b|$)",
+        text,
+        re.IGNORECASE
+    )
+
+    if match:
+        return 100.0
+
+    return 0.0
 def detect_document_type(text):
     """Detect the likely document type."""
 
@@ -203,6 +218,8 @@ if __name__ == "__main__":
 
     # Field extraction
     fields = extract_fields(text)
+    name_confidence = calculate_field_confidence(text, "Name")
+    dob_confidence = calculate_field_confidence(text, "Date of Birth")
 
     # DOB validation
     fields["dob_valid"] = validate_dob(
@@ -213,6 +230,8 @@ if __name__ == "__main__":
     fields["ocr_confidence"] = round(
         ocr_confidence, 2
     )
+    fields["name_confidence"] = name_confidence
+    fields["dob_confidence"] = dob_confidence
 
     # Add document type
     fields["document_type"] = document_type
