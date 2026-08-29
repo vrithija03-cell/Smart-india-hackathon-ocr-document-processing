@@ -3,6 +3,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 import re
 from datetime import datetime
 import json
+from tamper_detection import analyze_tampering
 
 
 # Tesseract location
@@ -220,6 +221,7 @@ def extract_fields(text):
 if __name__ == "__main__":
 
     image_path = "documents/test.png"
+    tamper_result = analyze_tampering(image_path)
 
     # OCR
     text, ocr_confidence, words, confidences = extract_text(
@@ -242,6 +244,10 @@ if __name__ == "__main__":
 
     print("\n========== DOCUMENT TYPE ==========")
     print("Document Type:", document_type)
+    print("\n========== TAMPERING ANALYSIS ==========")
+    print("Status:", tamper_result["status"])
+    print("Tampering Score:", tamper_result["tampering_score"])
+    print("Signals:", tamper_result["signals"])
 
     # Extract fields
     fields = extract_fields(text)
@@ -288,6 +294,7 @@ if __name__ == "__main__":
 
     # Add document type
     fields["document_type"] = document_type
+    fields["tampering"] = tamper_result
 
     print("\n========== EXTRACTED FIELDS ==========")
     print("Name:", fields["name"])
