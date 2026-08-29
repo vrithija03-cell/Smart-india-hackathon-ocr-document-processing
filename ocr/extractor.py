@@ -1,8 +1,8 @@
 import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter
 import re
-import json
 from datetime import datetime
+import json
 
 # Tesseract location
 pytesseract.pytesseract.tesseract_cmd = (
@@ -14,25 +14,74 @@ def preprocess_image(image_path):
     """Improve the image before OCR."""
     image = Image.open(image_path)
 
-    # Convert to grayscale
     image = image.convert("L")
-
-    # Improve contrast
     image = ImageEnhance.Contrast(image).enhance(2)
-
-    # Reduce small noise
     image = image.filter(ImageFilter.MedianFilter(size=3))
 
     return image
 
 
 def extract_text(image_path):
-    """Extract text from the document image."""
+    """Extract text and calculate OCR confidence."""
+
     image = preprocess_image(image_path)
 
-    text = pytesseract.image_to_string(image)
+    data = pytesseract.image_to_data(
+        image,
+        output_type=pytesseract.Output.DICT
+    )
 
-    return text
+    words = []
+    confidences = []
+
+    for i in range(len(data["text"])):
+
+        word = data["text"][i].strip()
+
+        try:
+            confidence = float(data["conf"][i])
+        except ValueError:
+            confidence = -1
+
+        if word and confidence >= 0:
+            words.append(word)
+            confidences.append(confidence)
+
+    text = " ".join(words)
+
+    if confidences:
+        average_confidence = sum(confidences) / len(confidences)
+    else:
+        average_confidence = 0
+
+    return text, average_confidence
+
+
+def detect_document_type(text):
+    """Detect the likely document type."""
+
+    text_upper = text.upper()
+
+    if "AADHAAR" in text_upper or "UNIQUE IDENTIFICATION" in text_upper:
+        return "Aadhaar"
+
+    elif (
+        "INCOME TAX DEPARTMENT" in text_upper
+        or "PERMANENT ACCOUNT NUMBER" in text_upper
+    ):
+        return "PAN"
+
+    elif (
+        "DRIVING LICENCE" in text_upper
+        or "DRIVING LICENSE" in text_upper
+    ):
+        return "Driving Licence"
+
+    elif "PASSPORT" in text_upper:
+        return "Passport"
+
+    else:
+        return "Unknown"
 
 
 def validate_dob(dob):
@@ -41,11 +90,24 @@ def validate_dob(dob):
     if not dob:
         return False
 
-    try:
-        datetime.strptime(dob, "%d/%m/%Y")
-        return True
-    except ValueError:
-        return False
+    # Try different common date formats
+    formats = [
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%d/%m/%y",
+        "%d-%m-%y"
+    ]
+
+    for date_format in formats:
+        try:
+            datetime.strptime(dob, date_format)
+            return True
+        except ValueError:
+            continue
+
+    return False
+
+
 def extract_fields(text):
     """Extract important fields from OCR text."""
 
@@ -55,7 +117,7 @@ def extract_fields(text):
         "document_id": None
     }
 
-    # Correct some common OCR mistakes
+    # Correct common OCR mistakes
     text = text.replace("Narne", "Name")
     text = text.replace("D0B", "DOB")
     text = text.replace("Docurnent", "Document")
@@ -64,7 +126,8 @@ def extract_fields(text):
     # Find Name
     # -------------------------
     name_match = re.search(
-        r"Name\s*[:\-]?\s*(.+)",
+        r"Name\s*[:\-]?\s*(.*?)(?=\s+"
+        r"(?:DOB|Date of Birth|Birth Date)\b|$)",
         text,
         re.IGNORECASE
     )
@@ -87,13 +150,12 @@ def extract_fields(text):
     if dob_match:
         dob = dob_match.group(1)
 
-        # Correct OCR mistakes ONLY inside the DOB
+        # Correct OCR mistakes ONLY inside DOB
         dob = dob.replace("@", "0")
         dob = dob.replace("O", "0")
         dob = dob.replace("I", "1")
         dob = dob.replace("l", "1")
 
-        # Remove spaces
         dob = re.sub(r"\s+", "", dob)
 
         fields["date_of_birth"] = dob
@@ -114,24 +176,46 @@ def extract_fields(text):
     return fields
 
 
-# -------------------------
-# Main program
-# -------------------------
+# =========================
+# MAIN PROGRAM
+# =========================
+
 if __name__ == "__main__":
 
     image_path = "documents/test.png"
 
-    # Extract text
-    text = extract_text(image_path)
+    # OCR
+    text, ocr_confidence = extract_text(image_path)
 
     print("\n========== RAW OCR ==========")
     print(text)
 
-    # Extract fields
+    # OCR confidence
+    print("\n========== OCR CONFIDENCE ==========")
+    print("Average OCR Confidence:",
+          round(ocr_confidence, 2), "%")
+
+    # Document type
+    document_type = detect_document_type(text)
+
+    print("\n========== DOCUMENT TYPE ==========")
+    print("Document Type:", document_type)
+
+    # Field extraction
     fields = extract_fields(text)
 
-    # Validate DOB
-    fields["dob_valid"] = validate_dob(fields["date_of_birth"])
+    # DOB validation
+    fields["dob_valid"] = validate_dob(
+        fields["date_of_birth"]
+    )
+
+    # Add OCR confidence
+    fields["ocr_confidence"] = round(
+        ocr_confidence, 2
+    )
+
+    # Add document type
+    fields["document_type"] = document_type
 
     print("\n========== EXTRACTED FIELDS ==========")
     print("Name:", fields["name"])
@@ -139,7 +223,7 @@ if __name__ == "__main__":
     print("Document ID:", fields["document_id"])
     print("DOB Valid:", fields["dob_valid"])
 
-    # Save results as JSON
+    # Save JSON
     with open("ocr_result.json", "w") as file:
         json.dump(fields, file, indent=4)
 
